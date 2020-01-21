@@ -43,14 +43,16 @@ class Topic(Node):
         title (str): The title of the topic
         locked (int): 1 if the topic is locked, else 0
         views (int): The number of views of the topic
+        slug (str): The slug following the id in the topic uri
     """
     # Attributes to save
-    STATE_KEEP = ["topic_id", "topic_type", "title", "locked", "views"]
+    STATE_KEEP = ["topic_id", "topic_type", "title", "locked", "views", "topic_slug"]
 
-    def __init__(self, topic_id, topic_type, title, locked, views):
+    def __init__(self, topic_id, topic_type, title, locked, views, topic_slug):
         Node.__init__(self)
         self.topic_id = topic_id
         self.topic_type = topic_type
+        self.topic_slug = topic_slug
         self.title = title
         self.locked = locked
         self.views = views
@@ -61,8 +63,9 @@ class Topic(Node):
         self.root.current_topics += 1
         self.ui.update()
 
-        response = self.session.get("/t{}-a".format(self.topic_id))
+        response = self.session.get("/t{}-{}".format(self.topic_id, self.topic_slug))
         for page in pages(response.text):
+            self.logger.debug("sujet {} page {}".format(self.topic_id, page))
             self.add_child(TopicPage(page))
 
     def get_posts(self):
@@ -74,39 +77,43 @@ class Topic(Node):
                 yield post
 
     def _dump_(self, sqlfile):
-        first_post = self.children[0].children[0]
-        last_post = self.children[-1].children[-1]
+        try:
+            first_post = self.children[0].children[0]
+            last_post = self.children[-1].children[-1]
 
-        replies = sum(1 for _ in self.get_posts()) - 1
+            replies = sum(1 for _ in self.get_posts()) - 1
 
-        sqlfile.insert("topics", {
-            "topic_id" : self.topic_id,
-            "forum_id" : self.forum.newid,
-            "topic_title" : self.title,
-            "topic_poster" : first_post.poster.newid,
-            "topic_time" : first_post.time,
-            "topic_views" : self.views,
-            "topic_replies" : replies,
-            "topic_replies_real" : replies,
-            "topic_status" : self.locked,
-            "topic_type" : self.topic_type,
-            "topic_first_post_id" : first_post.post_id,
-            "topic_first_poster_name" : first_post.poster.name,
-            "topic_first_poster_colour" : first_post.poster.colour,
-            "topic_last_post_id" : last_post.post_id,
-            "topic_last_poster_id" : last_post.poster.newid,
-            "topic_last_poster_name" : last_post.poster.name,
-            "topic_last_poster_colour" : last_post.poster.colour,
-            "topic_last_post_subject" : last_post.title,
-            "topic_last_post_time" : last_post.time
-        })
-
-        for user_id in set(post.poster.newid for post in self.get_posts()):
-            sqlfile.insert("topics_posted", {
-                "user_id" : user_id,
+            sqlfile.insert("topics", {
                 "topic_id" : self.topic_id,
-                "topic_posted" : 1
+                "forum_id" : self.forum.newid,
+                "topic_title" : self.title,
+                "topic_poster" : first_post.poster.newid,
+                "topic_time" : first_post.time,
+                "topic_views" : self.views,
+                "topic_replies" : replies,
+                "topic_replies_real" : replies,
+                "topic_status" : self.locked,
+                "topic_type" : self.topic_type,
+                "topic_first_post_id" : first_post.post_id,
+                "topic_first_poster_name" : first_post.poster.name,
+                "topic_first_poster_colour" : first_post.poster.colour,
+                "topic_last_post_id" : last_post.post_id,
+                "topic_last_poster_id" : last_post.poster.newid,
+                "topic_last_poster_name" : last_post.poster.name,
+                "topic_last_poster_colour" : last_post.poster.colour,
+                "topic_last_post_subject" : last_post.title,
+                "topic_last_post_time" : last_post.time
             })
+
+            for user_id in set(post.poster.newid for post in self.get_posts()):
+                sqlfile.insert("topics_posted", {
+                    "user_id" : user_id,
+                    "topic_id" : self.topic_id,
+                    "topic_posted" : 1
+                })
+        except IndexError as e:
+            import pdb; pdb.set_trace()
+            self.logger.warning("Le sujet %d est vide, sans un seul post (ce qui n'est pas possible). Sujet irrécupérable.", self.topic_id)
 
 class ForumPage(Node):
     """
@@ -135,13 +142,14 @@ class ForumPage(Node):
 
             topic_id = int(re.search(r"/t(\d+)-.*", clean_url(e("a").attr("href"))).group(1))
             if topic_id not in self.announcements:
+                topic_slug = re.search(r"/t(\d+)-(.*)", clean_url(e("a").attr("href"))).group(2)
                 f = e.parents().eq(-2)
                 locked = 1 if ("verrouillé" in f("td img").eq(0).attr("alt")) else 0
                 views = int(f("td").eq(5).text())
                 topic_type = TOPIC_TYPES.get(e("strong").text(), 0)
                 title = e("a").text()
 
-                self.add_child(Topic(topic_id, topic_type, title, locked, views))
+                self.add_child(Topic(topic_id, topic_type, title, locked, views, topic_slug))
                 if topic_type >= 2:
                     # The topic is an announcement, save its id to avoid exporting it again
                     self.announcements.append(topic_id)

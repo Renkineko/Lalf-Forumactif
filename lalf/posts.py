@@ -94,16 +94,24 @@ class TopicPage(Node):
         self.logger.debug('Récupération des messages du sujet %d (page %d)',
                           self.topic.topic_id, self.page)
 
-        response = self.session.get("/t{}p{}-a".format(self.topic.topic_id, self.page))
+        response = self.session.get("/t{}p{}-{}".format(self.topic.topic_id, self.page, self.topic.topic_slug))
+        self.logger.debug("url : t{}p{}-{}".format(self.topic.topic_id, self.page, self.topic.topic_slug))
         document = PyQuery(response.text)
 
         pattern = re.compile(r"/u(\d+)")
 
         for element in document.find('tr.post'):
             e = PyQuery(element)
-
-            post_id = int(e("td span.name a").attr("name"))
-
+            
+            name = e("td span.name a").attr("name")
+            
+            if name is None:
+                self.logger.warning('Message %s (sujet %d) irrécupérable, informations manquantes. !',
+                                    e.attr('class'), self.topic.topic_id)
+                continue
+            
+            post_id = int(name)
+            
             self.logger.info('Récupération du message %d (sujet %d)',
                              post_id, self.topic.topic_id)
 
